@@ -167,7 +167,7 @@ class _HomePageState extends State<HomePage> {
             children: [
               _buildStatItem("Tổng bộ", filteredSets.length.toString()),
               _buildStatItem("Tổng thẻ", _calculateTotalCards(filteredSets).toString()),
-              _buildStatItem("Đang học", "0"),
+
             ],
           ),
         ),

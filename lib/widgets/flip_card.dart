@@ -1,4 +1,4 @@
-// widgets/flip_card.dart - FIX KHÔNG NGƯỢC CHỮ + HÌNH AN TOÀN
+// widgets/flip_card.dart - ĐÃ THÊM THAM SỐ isMastered
 import 'package:flutter/material.dart';
 import 'dart:io';
 import 'dart:math';
@@ -7,11 +7,14 @@ class FlipCard extends StatefulWidget {
   final String frontText;
   final String backText;
   final String? imagePath;
+  final bool isMastered; // THÊM THAM SỐ MỚI
+
   const FlipCard({
     super.key,
     required this.frontText,
     required this.backText,
     this.imagePath,
+    this.isMastered = false, // GIÁ TRỊ MẶC ĐỊNH
   });
 
   @override
@@ -68,13 +71,51 @@ class _FlipCardState extends State<FlipCard> with SingleTickerProviderStateMixin
                   BoxShadow(color: Colors.black26, blurRadius: 12, offset: Offset(0, 6)),
                 ],
               ),
-              child: Transform(
-                alignment: Alignment.center,
-                transform: Matrix4.rotationY(isUnder ? pi : 0), // Giữ chữ & ảnh đúng chiều
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: _buildCardContent(isUnder, hasImage),
-                ),
+              child: Stack(
+                children: [
+                  // NỘI DUNG THẺ
+                  Transform(
+                    alignment: Alignment.center,
+                    transform: Matrix4.rotationY(isUnder ? pi : 0),
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: _buildCardContent(isUnder, hasImage),
+                    ),
+                  ),
+
+                  // ICON THÀNH THẠO - HIỂN THỊ TRÊN CẢ 2 MẶT
+                  if (widget.isMastered)
+                    Positioned(
+                      top: 12,
+                      right: 12,
+                      child: Container(
+                        padding: const EdgeInsets.all(6),
+                        decoration: const BoxDecoration(
+                          color: Colors.amber,
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.star,
+                          color: Colors.white,
+                          size: 20,
+                        ),
+                      ),
+                    ),
+
+                  // NHÃN MẶT THẺ
+                  Positioned(
+                    bottom: 12,
+                    right: 12,
+                    child: Text(
+                      isUnder ? "Mặt sau" : "Mặt trước",
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           );
@@ -91,16 +132,21 @@ class _FlipCardState extends State<FlipCard> with SingleTickerProviderStateMixin
         child: Image.file(
           File(widget.imagePath!),
           fit: BoxFit.cover,
-          errorBuilder: (context, error, stackTrace) => const Icon(
-            Icons.broken_image,
-            size: 60,
-            color: Colors.white70,
-          ),
+          width: double.infinity,
+          height: double.infinity,
+          errorBuilder: (context, error, stackTrace) => _buildTextContent(isUnder),
         ),
       );
     } else {
       // Mặt sau hoặc mặt trước không có ảnh
-      return Center(
+      return _buildTextContent(isUnder);
+    }
+  }
+
+  Widget _buildTextContent(bool isUnder) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
         child: Text(
           isUnder ? widget.backText : widget.frontText,
           style: const TextStyle(
@@ -110,8 +156,8 @@ class _FlipCardState extends State<FlipCard> with SingleTickerProviderStateMixin
           ),
           textAlign: TextAlign.center,
         ),
-      );
-    }
+      ),
+    );
   }
 
   @override

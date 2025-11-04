@@ -1,4 +1,4 @@
-// services/flashcard_service.dart
+// services/flashcard_service.dart - SỬA LỖI VÒNG LẶP
 import 'dart:convert';
 import 'dart:math';
 import 'dart:io';
@@ -19,6 +19,7 @@ class FlashcardService with ChangeNotifier {
 
   bool _isDataLoaded = false;
   bool _isLoading = false;
+  bool _isNotifying = false; // THÊM: Ngăn chặn notify lặp
 
   // === KEYS ===
   Future<String> get _keyData async => 'flashcard_data_${await _getCurrentUserId()}';
@@ -28,6 +29,8 @@ class FlashcardService with ChangeNotifier {
   Future<String> get _keyUserName async => 'user_name_${await _getCurrentUserId()}';
   Future<String> get _keyDailyGoal async => 'daily_goal_${await _getCurrentUserId()}';
   Future<String> get _keyDarkMode async => 'dark_mode_${await _getCurrentUserId()}';
+  Future<String> get _keyTotalTests async => 'total_tests_${await _getCurrentUserId()}';
+  Future<String> get _keyTotalMastered async => 'total_mastered_${await _getCurrentUserId()}';
 
   // Lấy user ID hiện tại
   Future<String> _getCurrentUserId() async {
@@ -71,6 +74,7 @@ class FlashcardService with ChangeNotifier {
       debugPrint('❌ Lỗi loadData: $e');
     } finally {
       _isLoading = false;
+      // XÓA: Không gọi notifyListeners() ở đây
     }
   }
 
@@ -81,8 +85,105 @@ class FlashcardService with ChangeNotifier {
       final key = await _keyData;
       final jsonList = _sets.map((set) => set.toJson()).toList();
       await prefs.setString(key, jsonEncode(jsonList));
+
+      // SỬA: Chỉ notify khi không đang trong quá trình notify
+      if (!_isNotifying) {
+        _isNotifying = true;
+        notifyListeners();
+        _isNotifying = false;
+      }
     } catch (e) {
       debugPrint('❌ Lỗi saveData: $e');
+    }
+  }
+
+  // === PHƯƠNG THỨC MỚI CHO TRANG HỌC ===
+
+  // Lấy flashcards theo setId
+  Future<List<Map<String, dynamic>>> getFlashcardsBySetId(String setId) async {
+    try {
+      await loadData();
+
+      final set = _sets.firstWhere(
+            (s) => s.id == setId,
+        orElse: () => FlashcardSet(
+          id: '',
+          userId: '',
+          title: 'Not Found',
+          cards: [],
+        ),
+      );
+
+      if (set.id.isEmpty) {
+        return [];
+      }
+
+      return set.cards.map((card) {
+        return {
+          'id': '${setId}_${card.term}',
+          'setId': setId,
+          'front': card.term,
+          'back': card.meaning,
+          'note': card.note,
+          'mastered': card.mastered,
+        };
+      }).toList();
+
+    } catch (e) {
+      debugPrint('❌ Lỗi getFlashcardsBySetId: $e');
+      return [];
+    }
+  }
+
+  // Cập nhật tiến độ học tập
+  Future<void> updateLearningProgress({
+    required String cardId,
+    required bool isCorrect,
+  }) async {
+    try {
+      // cardId có định dạng: setId_term
+      final parts = cardId.split('_');
+      if (parts.length < 2) return;
+
+      final setId = parts[0];
+      final term = parts.sublist(1).join('_');
+
+      final setIndex = _sets.indexWhere((s) => s.id == setId);
+      if (setIndex == -1) return;
+
+      final cardIndex = _sets[setIndex].cards.indexWhere((c) => c.term == term);
+      if (cardIndex == -1) return;
+
+      // Cập nhật trạng thái học tập
+      if (isCorrect) {
+        // Nếu đúng, thêm ghi chú để đánh dấu đã học
+        if (_sets[setIndex].cards[cardIndex].note?.isEmpty ?? true) {
+          _sets[setIndex].cards[cardIndex].note = "Đã học";
+        }
+
+        // Tăng số lần đúng
+        _sets[setIndex].cards[cardIndex].correctCount =
+            (_sets[setIndex].cards[cardIndex].correctCount ?? 0) + 1;
+
+        // Nếu đúng 3 lần liên tiếp, đánh dấu thành thạo
+        if ((_sets[setIndex].cards[cardIndex].correctCount ?? 0) >= 3) {
+          _sets[setIndex].cards[cardIndex].mastered = true;
+        }
+      } else {
+        // Nếu sai, reset số lần đúng
+        _sets[setIndex].cards[cardIndex].correctCount = 0;
+        _sets[setIndex].cards[cardIndex].mastered = false;
+      }
+
+      await _saveData();
+
+      // Ghi nhận buổi học
+      await recordStudySession(1);
+
+      debugPrint('📝 Đã cập nhật tiến độ: $term - ${isCorrect ? "Đúng" : "Sai"}');
+
+    } catch (e) {
+      debugPrint('❌ Lỗi updateLearningProgress: $e');
     }
   }
 
@@ -96,12 +197,17 @@ class FlashcardService with ChangeNotifier {
       final totalCards = _sets.fold(0, (sum, set) => sum + set.cards.length);
       final totalStudiedKey = await _keyTotalStudied;
       final streakKey = await _keyStreak;
+      final totalTestsKey = await _keyTotalTests;
+      final totalMasteredKey = await _keyTotalMastered;
 
       final todayStudied = prefs.getInt(totalStudiedKey) ?? 0;
       final streak = prefs.getInt(streakKey) ?? 0;
+      final totalTests = prefs.getInt(totalTestsKey) ?? 0;
+      final totalMastered = prefs.getInt(totalMasteredKey) ?? 0;
       final goal = await getDailyGoal();
       final progress = goal > 0 ? (todayStudied / goal * 100).clamp(0, 100) : 0;
       final rememberRate = _calculateRememberRate();
+      final masteredRate = totalCards > 0 ? ((totalMastered / totalCards) * 100).round() : 0;
 
       final stats = {
         'totalSets': totalSets,
@@ -111,6 +217,9 @@ class FlashcardService with ChangeNotifier {
         'dailyGoal': goal,
         'progress': progress.toStringAsFixed(0),
         'rememberRate': rememberRate,
+        'totalTests': totalTests,
+        'totalMastered': totalMastered,
+        'masteredRate': masteredRate,
       };
 
       return stats;
@@ -129,6 +238,9 @@ class FlashcardService with ChangeNotifier {
       'dailyGoal': 20,
       'progress': '0',
       'rememberRate': 0,
+      'totalTests': 0,
+      'totalMastered': 0,
+      'masteredRate': 0,
     };
   }
 
@@ -191,8 +303,98 @@ class FlashcardService with ChangeNotifier {
     await prefs.setInt(streakKey, streak);
     await prefs.setInt(totalStudiedKey, todayStudied);
 
-    // Thông báo cập nhật sau khi học
-    notifyListeners();
+    // SỬA: Không gọi notifyListeners() ở đây để tránh vòng lặp
+    debugPrint('📚 Đã ghi nhận học: $cardCount thẻ');
+  }
+
+  // === GHI NHẬN KIỂM TRA ===
+  Future<void> recordTestSession(int correctAnswers, int totalQuestions, int newMasteredCards) async {
+    if (totalQuestions <= 0) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    final totalTestsKey = await _keyTotalTests;
+    final totalMasteredKey = await _keyTotalMastered;
+
+    int totalTests = prefs.getInt(totalTestsKey) ?? 0;
+    int totalMastered = prefs.getInt(totalMasteredKey) ?? 0;
+
+    totalTests++;
+    totalMastered += newMasteredCards;
+
+    await prefs.setInt(totalTestsKey, totalTests);
+    await prefs.setInt(totalMasteredKey, totalMastered);
+
+    await recordStudySession(totalQuestions);
+
+    debugPrint('📊 Đã ghi nhận kiểm tra: $correctAnswers/$totalQuestions, thành thạo: $newMasteredCards');
+
+    // SỬA: Chỉ notify khi không đang trong quá trình notify
+    if (!_isNotifying) {
+      _isNotifying = true;
+      notifyListeners();
+      _isNotifying = false;
+    }
+  }
+
+  // === QUẢN LÝ THẺ THÀNH THẠO ===
+  Future<void> markCardAsMastered(String setId, String term) async {
+    try {
+      final set = _sets.firstWhere((s) => s.id == setId);
+      final card = set.cards.firstWhere((c) => c.term == term);
+      card.mastered = true;
+      await _saveData();
+      debugPrint('⭐ Đã đánh dấu thẻ thành thạo: $term');
+    } catch (e) {
+      debugPrint('❌ Lỗi đánh dấu thẻ thành thạo: $e');
+    }
+  }
+
+  Future<void> unmarkCardAsMastered(String setId, String term) async {
+    try {
+      final set = _sets.firstWhere((s) => s.id == setId);
+      final card = set.cards.firstWhere((c) => c.term == term);
+      card.mastered = false;
+      await _saveData();
+      debugPrint('🔁 Đã bỏ đánh dấu thành thạo: $term');
+    } catch (e) {
+      debugPrint('❌ Lỗi bỏ đánh dấu thành thạo: $e');
+    }
+  }
+
+  int getMasteredCardCount() {
+    int count = 0;
+    for (final set in _sets) {
+      for (final card in set.cards) {
+        if (card.mastered) {
+          count++;
+        }
+      }
+    }
+    return count;
+  }
+
+  List<Flashcard> getUnmasteredCards() {
+    final List<Flashcard> unmastered = [];
+    for (final set in _sets) {
+      for (final card in set.cards) {
+        if (!card.mastered) {
+          unmastered.add(card);
+        }
+      }
+    }
+    return unmastered;
+  }
+
+  List<Flashcard> getMasteredCards() {
+    final List<Flashcard> mastered = [];
+    for (final set in _sets) {
+      for (final card in set.cards) {
+        if (card.mastered) {
+          mastered.add(card);
+        }
+      }
+    }
+    return mastered;
   }
 
   // === CRUD OPERATIONS ===
@@ -205,8 +407,6 @@ class FlashcardService with ChangeNotifier {
         cards: []
     ));
     await _saveData();
-    // Thông báo có thay đổi dữ liệu
-    notifyListeners();
   }
 
   Future<void> updateSet(String id, String newTitle) async {
@@ -220,21 +420,18 @@ class FlashcardService with ChangeNotifier {
           cards: _sets[index].cards
       );
       await _saveData();
-      notifyListeners();
     }
   }
 
   Future<void> deleteSet(String id) async {
     _sets.removeWhere((s) => s.id == id);
     await _saveData();
-    notifyListeners();
   }
 
   Future<void> addCard(String setId, Flashcard card) async {
     final set = _sets.firstWhere((s) => s.id == setId);
     set.cards.add(card);
     await _saveData();
-    notifyListeners();
   }
 
   Future<void> updateCard(String setId, String oldTerm, Flashcard newCard) async {
@@ -243,7 +440,6 @@ class FlashcardService with ChangeNotifier {
     if (index != -1) {
       set.cards[index] = newCard;
       await _saveData();
-      notifyListeners();
     }
   }
 
@@ -258,7 +454,6 @@ class FlashcardService with ChangeNotifier {
     }
     set.cards.removeWhere((c) => c.term == term);
     await _saveData();
-    notifyListeners();
   }
 
   // === PROFILE ===
@@ -277,6 +472,13 @@ class FlashcardService with ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     final userNameKey = await _keyUserName;
     await prefs.setString(userNameKey, name);
+
+    // SỬA: Chỉ notify khi không đang trong quá trình notify
+    if (!_isNotifying) {
+      _isNotifying = true;
+      notifyListeners();
+      _isNotifying = false;
+    }
   }
 
   Future<int> getDailyGoal() async {
@@ -289,6 +491,13 @@ class FlashcardService with ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     final dailyGoalKey = await _keyDailyGoal;
     await prefs.setInt(dailyGoalKey, goal);
+
+    // SỬA: Chỉ notify khi không đang trong quá trình notify
+    if (!_isNotifying) {
+      _isNotifying = true;
+      notifyListeners();
+      _isNotifying = false;
+    }
   }
 
   Future<bool> isDarkMode() async {
@@ -301,6 +510,13 @@ class FlashcardService with ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     final darkModeKey = await _keyDarkMode;
     await prefs.setBool(darkModeKey, value);
+
+    // SỬA: Chỉ notify khi không đang trong quá trình notify
+    if (!_isNotifying) {
+      _isNotifying = true;
+      notifyListeners();
+      _isNotifying = false;
+    }
   }
 
   // === DỮ LIỆU MẪU ===
@@ -315,8 +531,20 @@ class FlashcardService with ChangeNotifier {
           userId: userId,
           title: "Động vật",
           cards: [
-            Flashcard(term: "cat", meaning: "con mèo", note: "VD: this is my cat"),
-            Flashcard(term: "dog", meaning: "con chó", note: "VD: this is my dog"),
+            Flashcard(
+              term: "cat",
+              meaning: "con mèo",
+              note: "VD: this is my cat",
+              mastered: false,
+              correctCount: 0,
+            ),
+            Flashcard(
+              term: "dog",
+              meaning: "con chó",
+              note: "VD: this is my dog",
+              mastered: false,
+              correctCount: 0,
+            ),
           ],
         ),
         FlashcardSet(
@@ -324,8 +552,20 @@ class FlashcardService with ChangeNotifier {
           userId: userId,
           title: "Trái cây",
           cards: [
-            Flashcard(term: "Apple", meaning: "Quả táo", note: ""),
-            Flashcard(term: "Banana", meaning: "Quả chuối", note: ""),
+            Flashcard(
+              term: "Apple",
+              meaning: "Quả táo",
+              note: "",
+              mastered: false,
+              correctCount: 0,
+            ),
+            Flashcard(
+              term: "Banana",
+              meaning: "Quả chuối",
+              note: "",
+              mastered: false,
+              correctCount: 0,
+            ),
           ],
         ),
       ]);
@@ -342,9 +582,35 @@ class FlashcardService with ChangeNotifier {
     _isLoading = false;
   }
 
-  // Chuyển đổi dữ liệu khi user đăng nhập/đăng xuất
   Future<void> switchUserData() async {
     resetLoadState();
     await loadData();
+  }
+
+  // === TIỆN ÍCH ===
+  List<Flashcard> getAllCards() {
+    final List<Flashcard> allCards = [];
+    for (final set in _sets) {
+      allCards.addAll(set.cards);
+    }
+    return allCards;
+  }
+
+  List<Flashcard> getRandomCardsForTest(int count) {
+    final allCards = getAllCards();
+    final shuffled = List<Flashcard>.from(allCards)..shuffle();
+    if (shuffled.length <= count) {
+      return shuffled;
+    }
+    return shuffled.sublist(0, count);
+  }
+
+  List<Flashcard> getUnmasteredCardsForTest(int count) {
+    final unmastered = getUnmasteredCards();
+    final shuffled = List<Flashcard>.from(unmastered)..shuffle();
+    if (shuffled.length <= count) {
+      return shuffled;
+    }
+    return shuffled.sublist(0, count);
   }
 }

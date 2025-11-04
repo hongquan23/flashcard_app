@@ -1,9 +1,11 @@
+// pages/set_detail_page.dart - CHỈ KIỂM TRA BỘ THẺ ĐƯỢC CHỌN
 import 'package:flutter/material.dart';
 import '../models/flashcard.dart';
 import '../models/flashcard_set.dart';
 import '../services/flashcard_service.dart';
 import 'add_edit_flashcard_page.dart';
 import 'learn_page.dart';
+import 'test_page.dart'; // Import TestPage
 import '../widgets/gradient_learn_button.dart';
 
 class SetDetailPage extends StatefulWidget {
@@ -18,6 +20,7 @@ class _SetDetailPageState extends State<SetDetailPage> {
   late FlashcardSet _currentSet;
   final FlashcardService _service = FlashcardService();
   List<FlashcardSet> _allSets = [];
+  bool _isLoading = true;
 
   @override
   void initState() {
@@ -27,6 +30,10 @@ class _SetDetailPageState extends State<SetDetailPage> {
   }
 
   Future<void> _loadCurrentSet() async {
+    setState(() {
+      _isLoading = true;
+    });
+
     await _service.loadData();
     _allSets = _service.sets;
 
@@ -38,6 +45,7 @@ class _SetDetailPageState extends State<SetDetailPage> {
     if (mounted) {
       setState(() {
         _currentSet = updatedSet;
+        _isLoading = false;
       });
     }
   }
@@ -46,12 +54,22 @@ class _SetDetailPageState extends State<SetDetailPage> {
     await _loadCurrentSet();
   }
 
+  // Tính số thẻ đã thành thạo
+  int _getMasteredCount() {
+    return _currentSet.cards.where((card) => card.mastered).length;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: Text(_currentSet.title),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: _refresh,
+            tooltip: "Làm mới",
+          ),
           IconButton(
             icon: const Icon(Icons.edit),
             onPressed: _showEditSetDialog,
@@ -78,7 +96,7 @@ class _SetDetailPageState extends State<SetDetailPage> {
           ),
         ],
       ),
-      body: _buildBody(),
+      body: _isLoading ? _buildLoading() : _buildBody(),
       floatingActionButton: FloatingActionButton(
         onPressed: _addCard,
         child: const Icon(Icons.add),
@@ -88,59 +106,107 @@ class _SetDetailPageState extends State<SetDetailPage> {
     );
   }
 
+  Widget _buildLoading() {
+    return const Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          CircularProgressIndicator(),
+          SizedBox(height: 16),
+          Text('Đang tải dữ liệu...'),
+        ],
+      ),
+    );
+  }
+
   Widget _buildBody() {
     if (_currentSet.cards.isEmpty) {
-      return const Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.lightbulb_outline, size: 64, color: Colors.grey),
-            SizedBox(height: 16),
-            Text(
-              "Chưa có thẻ nào trong bộ này",
-              style: TextStyle(fontSize: 16, color: Colors.grey),
-            ),
-            SizedBox(height: 8),
-            Text(
-              "Hãy thêm thẻ đầu tiên để bắt đầu học!",
-              style: TextStyle(fontSize: 14, color: Colors.grey),
-            ),
-          ],
-        ),
-      );
+      return _buildEmptyState();
     }
 
     return Column(
       children: [
-        Container(
-          padding: const EdgeInsets.all(16),
-          color: Colors.blue[50],
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: [
-              _buildStatItem("Tổng thẻ", _currentSet.cards.length.toString()),
-              _buildStatItem("Đã học", "0"),
-              _buildStatItem("Thành thạo", "0"),
-            ],
-          ),
-        ),
-        Expanded(
-          child: ListView.builder(
-            padding: const EdgeInsets.all(8),
-            itemCount: _currentSet.cards.length,
-            itemBuilder: (context, index) {
-              final card = _currentSet.cards[index];
-              return _buildCardItem(card, index);
-            },
-          ),
-        ),
+        _buildStatsHeader(),
+        const SizedBox(height: 8),
+        _buildCardList(),
       ],
     );
   }
 
-  Widget _buildStatItem(String label, String value) {
+  Widget _buildEmptyState() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.lightbulb_outline, size: 80, color: Colors.grey[400]),
+            const SizedBox(height: 24),
+            const Text(
+              "Bộ thẻ trống",
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.grey),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              "Hãy thêm thẻ đầu tiên để bắt đầu học!",
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 14, color: Colors.grey),
+            ),
+            const SizedBox(height: 24),
+            ElevatedButton.icon(
+              onPressed: _addCard,
+              icon: const Icon(Icons.add),
+              label: const Text("Thêm thẻ đầu tiên"),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStatsHeader() {
+    final masteredCount = _getMasteredCount();
+    final masteredPercent = _currentSet.cards.isNotEmpty
+        ? (masteredCount / _currentSet.cards.length * 100).round()
+        : 0;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.blue[50],
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      margin: const EdgeInsets.all(16),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceAround,
+        children: [
+          _buildStatItem("Tổng thẻ", _currentSet.cards.length.toString(), Icons.credit_card),
+
+
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatItem(String label, String value, IconData icon) {
     return Column(
       children: [
+        Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: Colors.blue[100],
+            shape: BoxShape.circle,
+          ),
+          child: Icon(icon, size: 20, color: Colors.blue[800]),
+        ),
+        const SizedBox(height: 4),
         Text(
           value,
           style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
@@ -150,6 +216,19 @@ class _SetDetailPageState extends State<SetDetailPage> {
           style: const TextStyle(fontSize: 12, color: Colors.grey),
         ),
       ],
+    );
+  }
+
+  Widget _buildCardList() {
+    return Expanded(
+      child: ListView.builder(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        itemCount: _currentSet.cards.length,
+        itemBuilder: (context, index) {
+          final card = _currentSet.cards[index];
+          return _buildCardItem(card, index);
+        },
+      ),
     );
   }
 
@@ -171,12 +250,19 @@ class _SetDetailPageState extends State<SetDetailPage> {
         ),
         child: ListTile(
           leading: CircleAvatar(
-            backgroundColor: Colors.blue[100],
-            child: Text('${index + 1}'),
+            backgroundColor: card.mastered ? Colors.green[100] : Colors.blue[100],
+            child: Icon(
+              card.mastered ? Icons.star : Icons.credit_card,
+              color: card.mastered ? Colors.green : Colors.blue,
+              size: 20,
+            ),
           ),
           title: Text(
             card.term,
-            style: const TextStyle(fontWeight: FontWeight.bold),
+            style: TextStyle(
+              fontWeight: FontWeight.bold,
+              color: card.mastered ? Colors.green[800] : Colors.black,
+            ),
           ),
           subtitle: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -191,7 +277,15 @@ class _SetDetailPageState extends State<SetDetailPage> {
                 ),
             ],
           ),
-          trailing: const Icon(Icons.chevron_right),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (card.mastered)
+                Icon(Icons.star, color: Colors.amber, size: 16),
+              const SizedBox(width: 4),
+              const Icon(Icons.chevron_right, color: Colors.grey),
+            ],
+          ),
           onTap: () => _editCard(card),
         ),
       ),
@@ -200,29 +294,60 @@ class _SetDetailPageState extends State<SetDetailPage> {
 
   Widget _buildBottomNavigationBar() {
     return SafeArea(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          GradientLearnButton(
-            onPressed: _currentSet.cards.isEmpty
-                ? () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text("Hãy thêm thẻ để bắt đầu học!"),
-                  duration: Duration(seconds: 2),
-                ),
-              );
-            }
-                : () => Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => LearnPage(cards: _currentSet.cards),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.1),
+              blurRadius: 8,
+              offset: const Offset(0, -2),
+            ),
+          ],
+        ),
+        child: GradientLearnButton(
+          onPressed: _currentSet.cards.isEmpty
+              ? () {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text("Hãy thêm thẻ để bắt đầu học!"),
+                duration: Duration(seconds: 2),
+              ),
+            );
+          }
+              : () => Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => LearnPage(
+                cards: _currentSet.cards,
+                setName: _currentSet.title,
               ),
             ),
-            cardCount: _currentSet.cards.length,
-            isEnabled: _currentSet.cards.isNotEmpty,
           ),
-        ],
+          onTestPressed: _currentSet.cards.isEmpty
+              ? () {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text("Hãy thêm thẻ để bắt đầu kiểm tra!"),
+                duration: Duration(seconds: 2),
+              ),
+            );
+          }
+              : () => Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => TestPage(
+                cards: _currentSet.cards,
+                setName: _currentSet.title,
+              ),
+            ),
+          ),
+          cardCount: _currentSet.cards.length,
+          isEnabled: _currentSet.cards.isNotEmpty,
+          showTestButton: true,
+          buttonText: "Học ngay",
+        ),
       ),
     );
   }
@@ -306,11 +431,13 @@ class _SetDetailPageState extends State<SetDetailPage> {
           TextButton(
             onPressed: () async {
               await _service.deleteSet(_currentSet.id);
-              Navigator.pop(context);
-              Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text("Đã xóa bộ thẻ \"${_currentSet.title}\"")),
-              );
+              if (mounted) {
+                Navigator.pop(context);
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text("Đã xóa bộ thẻ \"${_currentSet.title}\"")),
+                );
+              }
             },
             child: const Text("Xóa", style: TextStyle(color: Colors.red)),
           ),
@@ -345,7 +472,7 @@ class _SetDetailPageState extends State<SetDetailPage> {
                 setState(() {
                   _currentSet = FlashcardSet(
                       id: _currentSet.id,
-                      userId: _currentSet.userId, // QUAN TRỌNG: THÊM USER ID
+                      userId: _currentSet.userId,
                       title: controller.text.trim(),
                       cards: _currentSet.cards
                   );
