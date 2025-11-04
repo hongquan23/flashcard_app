@@ -1,3 +1,4 @@
+// services/flashcard_service.dart
 import 'dart:convert';
 import 'dart:math';
 import 'dart:io';
@@ -7,7 +8,7 @@ import '../models/flashcard_set.dart';
 import 'auth_service.dart';
 import 'package:flutter/foundation.dart';
 
-class FlashcardService {
+class FlashcardService with ChangeNotifier {
   static final FlashcardService _instance = FlashcardService._internal();
   factory FlashcardService() => _instance;
   FlashcardService._internal();
@@ -15,6 +16,9 @@ class FlashcardService {
   final AuthService _authService = AuthService();
   final List<FlashcardSet> _sets = [];
   List<FlashcardSet> get sets => List.unmodifiable(_sets);
+
+  bool _isDataLoaded = false;
+  bool _isLoading = false;
 
   // === KEYS ===
   Future<String> get _keyData async => 'flashcard_data_${await _getCurrentUserId()}';
@@ -32,39 +36,125 @@ class FlashcardService {
   }
 
   // === TẢI DỮ LIỆU ===
-  Future<void> loadData() async {
-    final prefs = await SharedPreferences.getInstance();
-    final key = await _keyData;
-    final data = prefs.getString(key);
+  Future<void> loadData({bool forceRefresh = false}) async {
+    if (_isLoading && !forceRefresh) return;
+    if (_isDataLoaded && _sets.isNotEmpty && !forceRefresh) return;
 
-    _sets.clear();
+    _isLoading = true;
 
-    if (data != null) {
-      try {
-        final List<dynamic> jsonList = jsonDecode(data);
-        _sets.addAll(jsonList.map((e) => FlashcardSet.fromJson(e)).toList());
-      } catch (e) {
-        // THAY THẾ PRINT BẰNG debugPrint
-        debugPrint('Lỗi tải dữ liệu: $e');
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final key = await _keyData;
+      final data = prefs.getString(key);
+
+      if (forceRefresh) {
+        _sets.clear();
+      }
+
+      if (data != null) {
+        try {
+          final List<dynamic> jsonList = jsonDecode(data);
+          _sets.addAll(jsonList.map((e) => FlashcardSet.fromJson(e)).toList());
+          _isDataLoaded = true;
+        } catch (e) {
+          debugPrint('❌ Lỗi decode dữ liệu: $e');
+          await _addSampleData();
+          await _saveData();
+          _isDataLoaded = true;
+        }
+      } else {
         await _addSampleData();
         await _saveData();
+        _isDataLoaded = true;
       }
-    } else {
-      await _addSampleData();
-      await _saveData();
+    } catch (e) {
+      debugPrint('❌ Lỗi loadData: $e');
+    } finally {
+      _isLoading = false;
     }
   }
 
   // === LƯU DỮ LIỆU ===
   Future<void> _saveData() async {
-    final prefs = await SharedPreferences.getInstance();
-    final key = await _keyData;
-    final jsonList = _sets.map((set) => set.toJson()).toList();
-    await prefs.setString(key, jsonEncode(jsonList));
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final key = await _keyData;
+      final jsonList = _sets.map((set) => set.toJson()).toList();
+      await prefs.setString(key, jsonEncode(jsonList));
+    } catch (e) {
+      debugPrint('❌ Lỗi saveData: $e');
+    }
+  }
+
+  // === THỐNG KÊ ===
+  Future<Map<String, dynamic>> getStats({bool forceRefresh = false}) async {
+    try {
+      await loadData(forceRefresh: forceRefresh);
+
+      final prefs = await SharedPreferences.getInstance();
+      final totalSets = _sets.length;
+      final totalCards = _sets.fold(0, (sum, set) => sum + set.cards.length);
+      final totalStudiedKey = await _keyTotalStudied;
+      final streakKey = await _keyStreak;
+
+      final todayStudied = prefs.getInt(totalStudiedKey) ?? 0;
+      final streak = prefs.getInt(streakKey) ?? 0;
+      final goal = await getDailyGoal();
+      final progress = goal > 0 ? (todayStudied / goal * 100).clamp(0, 100) : 0;
+      final rememberRate = _calculateRememberRate();
+
+      final stats = {
+        'totalSets': totalSets,
+        'totalCards': totalCards,
+        'todayStudied': todayStudied,
+        'streak': streak,
+        'dailyGoal': goal,
+        'progress': progress.toStringAsFixed(0),
+        'rememberRate': rememberRate,
+      };
+
+      return stats;
+    } catch (e) {
+      debugPrint('❌ Lỗi getStats: $e');
+      return _getDefaultStats();
+    }
+  }
+
+  Map<String, dynamic> _getDefaultStats() {
+    return {
+      'totalSets': 0,
+      'totalCards': 0,
+      'todayStudied': 0,
+      'streak': 0,
+      'dailyGoal': 20,
+      'progress': '0',
+      'rememberRate': 0,
+    };
+  }
+
+  // Hàm tính tỷ lệ nhớ
+  int _calculateRememberRate() {
+    if (_sets.isEmpty) return 0;
+
+    int totalCards = 0;
+    int rememberedCards = 0;
+
+    for (final set in _sets) {
+      for (final card in set.cards) {
+        totalCards++;
+        if (card.note != null && card.note!.isNotEmpty) {
+          rememberedCards++;
+        }
+      }
+    }
+
+    return totalCards > 0 ? ((rememberedCards / totalCards) * 100).round() : 0;
   }
 
   // === GHI NHẬN HỌC ===
   Future<void> recordStudySession(int cardCount) async {
+    if (cardCount <= 0) return;
+
     final prefs = await SharedPreferences.getInstance();
     final today = DateTime.now().toIso8601String().substring(0, 10);
     final lastStudyKey = await _keyLastStudy;
@@ -82,7 +172,11 @@ class FlashcardService {
       todayStudied = cardCount;
       if (lastDate.isNotEmpty) {
         final last = DateTime.parse(lastDate);
-        final diff = DateTime.now().difference(last).inDays;
+        final today = DateTime.now();
+        final diff = DateTime(today.year, today.month, today.day)
+            .difference(DateTime(last.year, last.month, last.day))
+            .inDays;
+
         if (diff == 1) {
           streak++;
         } else if (diff > 1) {
@@ -96,6 +190,75 @@ class FlashcardService {
     await prefs.setString(lastStudyKey, today);
     await prefs.setInt(streakKey, streak);
     await prefs.setInt(totalStudiedKey, todayStudied);
+
+    // Thông báo cập nhật sau khi học
+    notifyListeners();
+  }
+
+  // === CRUD OPERATIONS ===
+  Future<void> addSet(String title) async {
+    final userId = await _getCurrentUserId();
+    _sets.add(FlashcardSet(
+        id: _generateId(),
+        userId: userId,
+        title: title,
+        cards: []
+    ));
+    await _saveData();
+    // Thông báo có thay đổi dữ liệu
+    notifyListeners();
+  }
+
+  Future<void> updateSet(String id, String newTitle) async {
+    final index = _sets.indexWhere((s) => s.id == id);
+    if (index != -1) {
+      final userId = await _getCurrentUserId();
+      _sets[index] = FlashcardSet(
+          id: id,
+          userId: userId,
+          title: newTitle,
+          cards: _sets[index].cards
+      );
+      await _saveData();
+      notifyListeners();
+    }
+  }
+
+  Future<void> deleteSet(String id) async {
+    _sets.removeWhere((s) => s.id == id);
+    await _saveData();
+    notifyListeners();
+  }
+
+  Future<void> addCard(String setId, Flashcard card) async {
+    final set = _sets.firstWhere((s) => s.id == setId);
+    set.cards.add(card);
+    await _saveData();
+    notifyListeners();
+  }
+
+  Future<void> updateCard(String setId, String oldTerm, Flashcard newCard) async {
+    final set = _sets.firstWhere((s) => s.id == setId);
+    final index = set.cards.indexWhere((c) => c.term == oldTerm);
+    if (index != -1) {
+      set.cards[index] = newCard;
+      await _saveData();
+      notifyListeners();
+    }
+  }
+
+  Future<void> deleteCard(String setId, String term) async {
+    final set = _sets.firstWhere((s) => s.id == setId);
+    final card = set.cards.firstWhere((c) => c.term == term);
+    if (card.imagePath != null) {
+      final file = File(card.imagePath!);
+      if (file.existsSync()) {
+        await file.delete();
+      }
+    }
+    set.cards.removeWhere((c) => c.term == term);
+    await _saveData();
+    notifyListeners();
   }
 
   // === PROFILE ===
@@ -107,7 +270,7 @@ class FlashcardService {
 
     final prefs = await SharedPreferences.getInstance();
     final userNameKey = await _keyUserName;
-    return prefs.getString(userNameKey) ?? "Người dùng"; // ĐÃ SỬA TYP0
+    return prefs.getString(userNameKey) ?? "Người dùng";
   }
 
   Future<void> setUserName(String name) async {
@@ -140,65 +303,16 @@ class FlashcardService {
     await prefs.setBool(darkModeKey, value);
   }
 
-  // === XÓA DỮ LIỆU ===
-  Future<void> clearAllData() async {
-    final prefs = await SharedPreferences.getInstance();
-
-    await prefs.remove(await _keyData);
-    await prefs.remove(await _keyLastStudy);
-    await prefs.remove(await _keyStreak);
-    await prefs.remove(await _keyTotalStudied);
-    await prefs.remove(await _keyUserName);
-    await prefs.remove(await _keyDailyGoal);
-    await prefs.remove(await _keyDarkMode);
-
-    _sets.clear();
-    await _addSampleData();
-    await _saveData();
-  }
-
-  Future<void> clearAllUsersData() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.clear();
-    _sets.clear();
-    await _addSampleData();
-    await _saveData();
-  }
-
-  // === THỐNG KÊ ===
-  Future<Map<String, dynamic>> getStats() async {
-    final prefs = await SharedPreferences.getInstance();
-    final totalSets = _sets.length;
-    final totalCards = _sets.fold(0, (sum, set) => sum + set.cards.length);
-    final totalStudiedKey = await _keyTotalStudied;
-    final streakKey = await _keyStreak;
-
-    final todayStudied = prefs.getInt(totalStudiedKey) ?? 0;
-    final streak = prefs.getInt(streakKey) ?? 0;
-    final goal = await getDailyGoal();
-    final progress = goal > 0 ? (todayStudied / goal * 100).clamp(0, 100) : 0;
-
-    return {
-      'totalSets': totalSets,
-      'totalCards': totalCards,
-      'todayStudied': todayStudied,
-      'streak': streak,
-      'dailyGoal': goal,
-      'progress': progress.toStringAsFixed(0),
-    };
-  }
-
   // === DỮ LIỆU MẪU ===
   Future<void> _addSampleData() async {
     final userId = await _getCurrentUserId();
-    // Chỉ thêm dữ liệu mẫu cho user chưa đăng nhập
     if (userId == 'anonymous') {
       final id1 = _generateId();
       final id2 = _generateId();
       _sets.addAll([
         FlashcardSet(
           id: id1,
-          userId: userId, // THÊM USER ID
+          userId: userId,
           title: "Động vật",
           cards: [
             Flashcard(term: "cat", meaning: "con mèo", note: "VD: this is my cat"),
@@ -207,7 +321,7 @@ class FlashcardService {
         ),
         FlashcardSet(
           id: id2,
-          userId: userId, // THÊM USER ID
+          userId: userId,
           title: "Trái cây",
           cards: [
             Flashcard(term: "Apple", meaning: "Quả táo", note: ""),
@@ -222,67 +336,15 @@ class FlashcardService {
     return '${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(10000)}';
   }
 
-  // === CRUD OPERATIONS - ĐÃ SỬA LỖI USERID ===
-  Future<void> addSet(String title) async {
-    final userId = await _getCurrentUserId(); // LẤY USER ID
-    _sets.add(FlashcardSet(
-        id: _generateId(),
-        userId: userId, // THÊM USER ID
-        title: title,
-        cards: []
-    ));
-    await _saveData();
-  }
-
-  Future<void> updateSet(String id, String newTitle) async {
-    final index = _sets.indexWhere((s) => s.id == id);
-    if (index != -1) {
-      final userId = await _getCurrentUserId(); // LẤY USER ID
-      _sets[index] = FlashcardSet(
-          id: id,
-          userId: userId, // THÊM USER ID
-          title: newTitle,
-          cards: _sets[index].cards
-      );
-      await _saveData();
-    }
-  }
-
-  Future<void> deleteSet(String id) async {
-    _sets.removeWhere((s) => s.id == id);
-    await _saveData();
-  }
-
-  Future<void> addCard(String setId, Flashcard card) async {
-    final set = _sets.firstWhere((s) => s.id == setId);
-    set.cards.add(card);
-    await _saveData();
-  }
-
-  Future<void> updateCard(String setId, String oldTerm, Flashcard newCard) async {
-    final set = _sets.firstWhere((s) => s.id == setId);
-    final index = set.cards.indexWhere((c) => c.term == oldTerm);
-    if (index != -1) {
-      set.cards[index] = newCard;
-      await _saveData();
-    }
-  }
-
-  Future<void> deleteCard(String setId, String term) async {
-    final set = _sets.firstWhere((s) => s.id == setId);
-    final card = set.cards.firstWhere((c) => c.term == term);
-    if (card.imagePath != null) {
-      final file = File(card.imagePath!);
-      if (file.existsSync()) {
-        await file.delete();
-      }
-    }
-    set.cards.removeWhere((c) => c.term == term);
-    await _saveData();
+  // === RESET TRẠNG THÁI ===
+  void resetLoadState() {
+    _isDataLoaded = false;
+    _isLoading = false;
   }
 
   // Chuyển đổi dữ liệu khi user đăng nhập/đăng xuất
   Future<void> switchUserData() async {
+    resetLoadState();
     await loadData();
   }
 }

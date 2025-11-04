@@ -1,4 +1,4 @@
-// pages/profile_page.dart - TRANG CÁ NHÂN HOÀN CHỈNH
+// pages/profile_page.dart - TRANG CÁ NHÂN HOÀN CHỈNH VỚI REAL-TIME
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/flashcard_service.dart';
@@ -22,11 +22,41 @@ class _ProfilePageState extends State<ProfilePage> {
   Map<String, dynamic> stats = {};
   String userEmail = "";
   String joinDate = "";
+  bool _isListening = false;
 
   @override
   void initState() {
     super.initState();
     _loadProfile();
+
+    // Bắt đầu lắng nghe sau khi trang được khởi tạo
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _startListening();
+    });
+  }
+
+  @override
+  void dispose() {
+    // Dừng lắng nghe khi trang bị hủy
+    if (_isListening) {
+      service.removeListener(_onServiceUpdated);
+    }
+    super.dispose();
+  }
+
+  void _startListening() {
+    if (!_isListening) {
+      service.addListener(_onServiceUpdated);
+      _isListening = true;
+      debugPrint('🎧 ProfilePage: Bắt đầu lắng nghe thay đổi');
+    }
+  }
+
+  void _onServiceUpdated() {
+    debugPrint('🔄 ProfilePage: Nhận thông báo cập nhật - làm mới dữ liệu');
+    if (mounted) {
+      _loadProfile();
+    }
   }
 
   Future<void> _loadProfile() async {
@@ -34,7 +64,7 @@ class _ProfilePageState extends State<ProfilePage> {
       final name = await service.getUserName();
       final goal = await service.getDailyGoal();
       final isDark = await service.isDarkMode();
-      final data = await service.getStats();
+      final data = await service.getStats(forceRefresh: true);
 
       // Load thông tin user từ auth
       final currentUser = await authService.getCurrentUser();
@@ -74,36 +104,50 @@ class _ProfilePageState extends State<ProfilePage> {
               onPressed: _showLogoutDialog,
               tooltip: "Đăng xuất",
             ),
+          // THÊM: Nút refresh
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: _loadProfile,
+            tooltip: "Làm mới",
+          ),
         ],
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            // THÔNG TIN CÁ NHÂN
-            _buildProfileCard(isLoggedIn),
-            const SizedBox(height: 20),
+      body: RefreshIndicator(
+        onRefresh: _loadProfile,
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            children: [
+              // THÔNG TIN CÁ NHÂN
+              _buildProfileCard(isLoggedIn),
+              const SizedBox(height: 20),
 
-            // Thông báo nếu chưa đăng nhập
-            if (!isLoggedIn) _buildLoginPrompt(),
+              // Thông báo nếu chưa đăng nhập
+              if (!isLoggedIn) _buildLoginPrompt(),
 
-            // MỤC TIÊU VÀ TIẾN ĐỘ
-            _buildGoalCard(),
-            _buildProgressCard(progress),
-            const SizedBox(height: 20),
+              // MỤC TIÊU VÀ TIẾN ĐỘ
+              _buildGoalCard(),
+              _buildProgressCard(progress),
+              const SizedBox(height: 20),
 
-            // CÀI ĐẶT
-            _buildSettingsSection(themeProvider, isLoggedIn),
-            const SizedBox(height: 20),
+              // CÀI ĐẶT
+              _buildSettingsSection(themeProvider, isLoggedIn),
+              const SizedBox(height: 20),
 
-            _buildAppVersion(),
-          ],
+              _buildAppVersion(),
+            ],
+          ),
         ),
       ),
     );
   }
 
   Widget _buildProfileCard(bool isLoggedIn) {
+    final streak = stats['streak'] ?? 0;
+    final totalSets = stats['totalSets'] ?? 0;
+    final totalCards = stats['totalCards'] ?? 0;
+
     return Card(
       elevation: 6,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
@@ -144,21 +188,44 @@ class _ProfilePageState extends State<ProfilePage> {
                 style: TextStyle(color: Colors.grey[600]),
               ),
             ],
-            const SizedBox(height: 8),
+            const SizedBox(height: 16),
+
+            // THÊM: Thống kê nhanh
             Row(
-              mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
-                const Icon(Icons.local_fire_department, color: Colors.orange),
-                const SizedBox(width: 4),
-                Text(
-                  "${stats['streak'] ?? 0} ngày liên tục",
-                  style: const TextStyle(fontWeight: FontWeight.w600),
-                ),
+                _buildMiniStat("Bộ thẻ", "$totalSets", Icons.folder),
+                _buildMiniStat("Thẻ", "$totalCards", Icons.credit_card),
+                _buildMiniStat("Streak", "$streak", Icons.local_fire_department),
               ],
             ),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildMiniStat(String title, String value, IconData icon) {
+    return Column(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: Colors.blue.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(icon, size: 20, color: Colors.blue),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          value,
+          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+        ),
+        Text(
+          title,
+          style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+        ),
+      ],
     );
   }
 
@@ -185,6 +252,19 @@ class _ProfilePageState extends State<ProfilePage> {
               "Dữ liệu hiện tại chỉ được lưu cục bộ trên thiết bị này",
               style: TextStyle(fontSize: 12),
             ),
+            const SizedBox(height: 12),
+            ElevatedButton.icon(
+              onPressed: () {
+                // Điều hướng đến trang đăng nhập
+                Navigator.pushNamed(context, '/login');
+              },
+              icon: const Icon(Icons.login),
+              label: const Text("Đăng nhập ngay"),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.orange,
+                foregroundColor: Colors.white,
+              ),
+            ),
           ],
         ),
       ),
@@ -204,19 +284,46 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   Widget _buildProgressCard(double progress) {
+    final todayStudied = stats['todayStudied'] ?? 0;
+    final remaining = dailyGoal - todayStudied > 0 ? dailyGoal - todayStudied : 0;
+
     return Card(
-      child: ListTile(
-        leading: const Icon(Icons.show_chart, color: Colors.blue),
-        title: const Text("Tiến độ hôm nay"),
-        subtitle: Column(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text("${stats['todayStudied'] ?? 0} / $dailyGoal thẻ"),
-            const SizedBox(height: 4),
+            const Row(
+              children: [
+                Icon(Icons.show_chart, color: Colors.blue),
+                SizedBox(width: 8),
+                Text(
+                  "Tiến độ hôm nay",
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Text("$todayStudied / $dailyGoal thẻ"),
+            const SizedBox(height: 8),
             LinearProgressIndicator(
               value: progress / 100,
               backgroundColor: Colors.grey[300],
               valueColor: const AlwaysStoppedAnimation(Colors.green),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  "Đã học: $todayStudied thẻ",
+                  style: const TextStyle(fontSize: 12, color: Colors.green),
+                ),
+                Text(
+                  "Còn lại: $remaining thẻ",
+                  style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                ),
+              ],
             ),
           ],
         ),
@@ -226,25 +333,33 @@ class _ProfilePageState extends State<ProfilePage> {
 
   Widget _buildSettingsSection(ThemeProvider themeProvider, bool isLoggedIn) {
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: Text(
+            "Cài đặt",
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+          ),
+        ),
         _buildSettingItem(
           Icons.dark_mode,
           "Chế độ tối",
+          "Giao diện tối cho ứng dụng",
           Switch(
             value: darkMode,
             onChanged: (value) => _toggleDarkMode(value, themeProvider),
           ),
         ),
-        // ĐÃ BỎ: Mục "Đổi tên"
         if (isLoggedIn)
           _buildSettingItem(
             Icons.logout,
             "Đăng xuất",
+            "Đăng xuất khỏi tài khoản",
             null,
             onTap: _showLogoutDialog,
             color: Colors.orange,
           ),
-        // ĐÃ BỎ: Mục "Xóa tất cả dữ liệu"
       ],
     );
   }
@@ -252,14 +367,17 @@ class _ProfilePageState extends State<ProfilePage> {
   Widget _buildSettingItem(
       IconData icon,
       String title,
+      String subtitle,
       Widget? trailing, {
         VoidCallback? onTap,
         Color? color,
       }) {
     return Card(
+      margin: const EdgeInsets.symmetric(vertical: 4),
       child: ListTile(
         leading: Icon(icon, color: color ?? Colors.purple),
         title: Text(title),
+        subtitle: Text(subtitle),
         trailing: trailing ?? const Icon(Icons.chevron_right),
         onTap: onTap,
       ),
@@ -267,9 +385,13 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   Widget _buildAppVersion() {
-    return Text(
-      "Phiên bản 1.0.0",
-      style: TextStyle(color: Colors.grey[600]),
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Text(
+        "Phiên bản 1.0.0",
+        style: TextStyle(color: Colors.grey[600], fontSize: 12),
+        textAlign: TextAlign.center,
+      ),
     );
   }
 
@@ -280,6 +402,14 @@ class _ProfilePageState extends State<ProfilePage> {
 
     themeProvider.toggleTheme(value);
     service.setDarkMode(value);
+
+    // Thông báo thay đổi
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(value ? "Đã bật chế độ tối" : "Đã tắt chế độ tối"),
+        duration: const Duration(seconds: 1),
+      ),
+    );
   }
 
   void _showGoalDialog() {
@@ -290,25 +420,44 @@ class _ProfilePageState extends State<ProfilePage> {
       context: currentContext,
       builder: (_) => AlertDialog(
         title: const Text("Mục tiêu hàng ngày"),
-        content: TextField(
-          controller: controller,
-          keyboardType: TextInputType.number,
-          decoration: const InputDecoration(labelText: "Số thẻ/ngày"),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text("Số thẻ bạn muốn học mỗi ngày:"),
+            const SizedBox(height: 12),
+            TextField(
+              controller: controller,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: "Số thẻ/ngày",
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(currentContext),
             child: const Text("Hủy"),
           ),
-          TextButton(
+          ElevatedButton(
             onPressed: () async {
               final int? goal = int.tryParse(controller.text);
               if (goal != null && goal > 0) {
                 await service.setDailyGoal(goal);
                 if (mounted) {
-                  await _loadProfile();
+                  await _loadProfile(); // Load lại để cập nhật real-time
                   Navigator.pop(currentContext);
+
+                  ScaffoldMessenger.of(currentContext).showSnackBar(
+                    SnackBar(content: Text("Đã đặt mục tiêu: $goal thẻ/ngày")),
+                  );
                 }
+              } else {
+                ScaffoldMessenger.of(currentContext).showSnackBar(
+                  const SnackBar(content: Text("Vui lòng nhập số hợp lệ")),
+                );
               }
             },
             child: const Text("Lưu"),
@@ -326,13 +475,17 @@ class _ProfilePageState extends State<ProfilePage> {
       context: currentContext,
       builder: (_) => AlertDialog(
         title: const Text("Đăng xuất"),
-        content: const Text("Bạn có chắc muốn đăng xuất?"),
+        content: const Text("Bạn có chắc muốn đăng xuất? Dữ liệu sẽ được lưu cục bộ."),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(currentContext),
             child: const Text("Hủy"),
           ),
-          TextButton(
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.orange,
+              foregroundColor: Colors.white,
+            ),
             onPressed: () async {
               Navigator.pop(currentContext);
               await authService.logout();
@@ -342,14 +495,14 @@ class _ProfilePageState extends State<ProfilePage> {
               final themeProvider = Provider.of<ThemeProvider>(context, listen: false);
               themeProvider.logout();
 
+              // Load lại profile để cập nhật UI
+              await _loadProfile();
+
               ScaffoldMessenger.of(currentContext).showSnackBar(
                 const SnackBar(content: Text("Đã đăng xuất!")),
               );
             },
-            child: const Text(
-              "Đăng xuất",
-              style: TextStyle(color: Colors.orange),
-            ),
+            child: const Text("Đăng xuất"),
           ),
         ],
       ),

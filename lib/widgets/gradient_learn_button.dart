@@ -1,70 +1,249 @@
-// widgets/gradient_learn_button.dart
+// widgets/gradient_learn_button.dart - ĐÃ VIẾT LẠI HOÀN CHỈNH
 import 'package:flutter/material.dart';
 
 class GradientLearnButton extends StatefulWidget {
   final VoidCallback onPressed;
   final int cardCount;
   final bool isEnabled;
+  final String? buttonText;
+
   const GradientLearnButton({
     super.key,
     required this.onPressed,
     required this.cardCount,
     this.isEnabled = true,
+    this.buttonText,
   });
 
   @override
   State<GradientLearnButton> createState() => _GradientLearnButtonState();
 }
 
-class _GradientLearnButtonState extends State<GradientLearnButton> with SingleTickerProviderStateMixin {
+class _GradientLearnButtonState extends State<GradientLearnButton>
+    with SingleTickerProviderStateMixin {
+
   late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
+  late Animation<Color?> _colorAnimation;
+  bool _isTapped = false;
 
   @override
   void initState() {
     super.initState();
-    _pulseController = AnimationController(vsync: this, duration: const Duration(seconds: 2))..repeat(reverse: true);
-    _pulseAnimation = Tween<double>(begin: 0.95, end: 1.0).animate(CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut));
+
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1500),
+    )..repeat(reverse: true);
+
+    _pulseAnimation = Tween<double>(
+      begin: 0.95,
+      end: 1.0,
+    ).animate(
+      CurvedAnimation(
+        parent: _pulseController,
+        curve: Curves.easeInOut,
+      ),
+    );
+
+    _colorAnimation = ColorTween(
+      begin: Colors.white.withOpacity(0.2),
+      end: Colors.white.withOpacity(0.4),
+    ).animate(
+      CurvedAnimation(
+        parent: _pulseController,
+        curve: Curves.easeInOut,
+      ),
+    );
+  }
+
+  void _onTapDown(TapDownDetails details) {
+    if (widget.isEnabled) {
+      setState(() {
+        _isTapped = true;
+      });
+    }
+  }
+
+  void _onTapUp(TapUpDetails details) {
+    setState(() {
+      _isTapped = false;
+    });
+  }
+
+  void _onTapCancel() {
+    setState(() {
+      _isTapped = false;
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: _pulseAnimation,
+      animation: _pulseController,
       builder: (context, child) {
         return Transform.scale(
-          scale: widget.isEnabled ? _pulseAnimation.value : 1.0,
+          scale: widget.isEnabled
+              ? (_isTapped ? 0.95 : _pulseAnimation.value)
+              : 1.0,
           child: Container(
             width: double.infinity,
-            height: 60,
-            margin: const EdgeInsets.all(16),
+            height: 68,
+            margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
             decoration: BoxDecoration(
               gradient: LinearGradient(
-                colors: widget.isEnabled ? [Colors.blue, Colors.blueAccent, Colors.pink] : [Colors.grey.shade400, Colors.grey.shade500],
+                colors: widget.isEnabled
+                    ? [
+                  Colors.blue.shade600,
+                  Colors.blueAccent.shade400,
+                  Colors.purple.shade500,
+                ]
+                    : [
+                  Colors.grey.shade400,
+                  Colors.grey.shade500,
+                  Colors.grey.shade600,
+                ],
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
+                stops: const [0.0, 0.5, 1.0],
               ),
-              borderRadius: BorderRadius.circular(30),
-              boxShadow: [BoxShadow(color: Colors.purple.withOpacity(0.3), blurRadius: 20, offset: const Offset(0, 10))],
+              borderRadius: BorderRadius.circular(35),
+              boxShadow: widget.isEnabled
+                  ? [
+                BoxShadow(
+                  color: Colors.purple.withOpacity(0.4),
+                  blurRadius: 20,
+                  offset: const Offset(0, 8),
+                  spreadRadius: 2,
+                ),
+                BoxShadow(
+                  color: Colors.blue.withOpacity(0.3),
+                  blurRadius: 10,
+                  offset: const Offset(0, 4),
+                ),
+              ]
+                  : [
+                BoxShadow(
+                  color: Colors.grey.withOpacity(0.3),
+                  blurRadius: 8,
+                  offset: const Offset(0, 4),
+                ),
+              ],
             ),
             child: Material(
               color: Colors.transparent,
+              borderRadius: BorderRadius.circular(35),
               child: InkWell(
-                borderRadius: BorderRadius.circular(30),
+                borderRadius: BorderRadius.circular(35),
                 onTap: widget.isEnabled ? widget.onPressed : null,
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Icon(Icons.school, color: Colors.white, size: 28),
-                    const SizedBox(width: 12),
-                    const Text("Học ngay", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white)),
-                    const SizedBox(width: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                      decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), borderRadius: BorderRadius.circular(20)),
-                      child: Text("${widget.cardCount} thẻ", style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600)),
-                    ),
-                  ],
+                onTapDown: widget.isEnabled ? _onTapDown : null,
+                onTapUp: widget.isEnabled ? _onTapUp : null,
+                onTapCancel: widget.isEnabled ? _onTapCancel : null,
+                splashColor: Colors.white.withOpacity(0.3),
+                highlightColor: Colors.white.withOpacity(0.2),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      // Icon với hiệu ứng
+                      AnimatedContainer(
+                        duration: const Duration(milliseconds: 300),
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: _colorAnimation.value,
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          Icons.school,
+                          color: widget.isEnabled ? Colors.white : Colors.grey.shade200,
+                          size: 26,
+                        ),
+                      ),
+
+                      const SizedBox(width: 16),
+
+                      // Text chính
+                      Expanded(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              widget.buttonText ?? "Học ngay",
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                                color: widget.isEnabled ? Colors.white : Colors.grey.shade200,
+                                letterSpacing: 0.5,
+                              ),
+                            ),
+                            if (widget.cardCount > 0)
+                              Text(
+                                "${widget.cardCount} thẻ sẵn sàng",
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: widget.isEnabled
+                                      ? Colors.white.withOpacity(0.8)
+                                      : Colors.grey.shade300,
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+
+                      // Badge số thẻ
+                      if (widget.cardCount > 0)
+                        AnimatedContainer(
+                          duration: const Duration(milliseconds: 300),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 8,
+                          ),
+                          decoration: BoxDecoration(
+                            color: widget.isEnabled
+                                ? Colors.white.withOpacity(0.2)
+                                : Colors.grey.withOpacity(0.3),
+                            borderRadius: BorderRadius.circular(20),
+                            border: widget.isEnabled
+                                ? Border.all(
+                              color: Colors.white.withOpacity(0.3),
+                              width: 1,
+                            )
+                                : null,
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                widget.cardCount.toString(),
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  color: widget.isEnabled ? Colors.white : Colors.grey.shade200,
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              Icon(
+                                Icons.credit_card,
+                                size: 16,
+                                color: widget.isEnabled ? Colors.white : Colors.grey.shade200,
+                              ),
+                            ],
+                          ),
+                        ),
+
+                      // Mũi tên (chỉ hiện khi enabled)
+                      if (widget.isEnabled) ...[
+                        const SizedBox(width: 12),
+                        Icon(
+                          Icons.arrow_forward_ios_rounded,
+                          color: Colors.white.withOpacity(0.8),
+                          size: 20,
+                        ),
+                      ],
+                    ],
+                  ),
                 ),
               ),
             ),
